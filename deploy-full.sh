@@ -99,14 +99,54 @@ fi
 
 echo "✓ 环境变量已配置"
 
-# ========== 4. 安装依赖并构建前端 ==========
-echo "[4/6] 安装依赖并构建前端..."
+# ========== 4. 检查并安装Node.js ==========
+echo "[4/7] 检查Node.js和npm..."
+
+if ! command -v node &> /dev/null; then
+    echo "⚠️  未检测到Node.js，开始安装..."
+    
+    # 检测操作系统
+    if [ -f /etc/debian_version ]; then
+        # Debian/Ubuntu
+        echo "检测到Debian/Ubuntu系统，使用NodeSource安装..."
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+    elif [ -f /etc/redhat-release ]; then
+        # CentOS/RHEL
+        echo "检测到CentOS/RHEL系统，使用NodeSource安装..."
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+        sudo yum install -y nodejs
+    else
+        echo "❌ 无法识别的操作系统，请手动安装Node.js 20.x或更高版本"
+        echo "   参考: https://nodejs.org/en/download/package-manager"
+        exit 1
+    fi
+    
+    if ! command -v node &> /dev/null; then
+        echo "❌ Node.js安装失败，请手动安装"
+        exit 1
+    fi
+    
+    echo "✓ Node.js $(node -v) 安装成功"
+else
+    echo "✓ Node.js $(node -v) 已安装"
+fi
+
+if ! command -v npm &> /dev/null; then
+    echo "❌ npm未找到，但Node.js已安装，请检查安装"
+    exit 1
+fi
+
+echo "✓ npm $(npm -v) 已准备就绪"
+
+# ========== 5. 安装依赖并构建前端 ==========
+echo "[5/7] 安装依赖并构建前端..."
 npm install
 npm run build
 echo "✓ 前端构建完成"
 
-# ========== 5. 启动服务 ==========
-echo "[5/6] 启动前后端服务..."
+# ========== 6. 启动服务 ==========
+echo "[6/7] 启动前后端服务..."
 
 # 检查PM2
 if ! command -v pm2 &> /dev/null; then
@@ -125,7 +165,7 @@ pm2 startup
 
 echo "✓ 服务已启动"
 
-# ========== 6. 输出信息 ==========
+# ========== 7. 输出信息 ==========
 echo ""
 echo "========================================"
 echo "  🎉 部署成功！"
