@@ -25,14 +25,35 @@ if command -v pm2 &> /dev/null; then
     echo "✓ PM2服务已停止"
 fi
 
-# ========== 2. 拉取代码 ==========
-echo "[2/6] 拉取最新代码..."
+# ========== 2. 拉取/更新代码 ==========
+echo "[2/6] 更新代码..."
 if [ -d "$PROJECT_DIR" ]; then
     cd "$PROJECT_DIR"
-    git fetch origin
-    git reset --hard origin/$GIT_BRANCH
-    echo "✓ 代码已更新"
+    
+    # 检查是否是git仓库
+    if [ -d ".git" ]; then
+        echo "检测到已存在的仓库，执行更新..."
+        
+        # 保存本地修改（如果有）
+        git stash save "自动备份 - $(date '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
+        
+        # 拉取最新代码
+        git fetch origin
+        git checkout $GIT_BRANCH
+        git pull origin $GIT_BRANCH
+        
+        echo "✓ 代码已更新到最新版本"
+    else
+        echo "目录存在但不是git仓库，重新克隆..."
+        cd ..
+        rm -rf "$PROJECT_DIR"
+        git clone -b $GIT_BRANCH $GIT_REPO "$PROJECT_DIR"
+        cd "$PROJECT_DIR"
+        echo "✓ 代码已重新克隆"
+    fi
 else
+    echo "首次部署，克隆仓库..."
+    mkdir -p "$(dirname "$PROJECT_DIR")"
     git clone -b $GIT_BRANCH $GIT_REPO "$PROJECT_DIR"
     cd "$PROJECT_DIR"
     echo "✓ 代码已克隆"
