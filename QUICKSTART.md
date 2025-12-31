@@ -32,7 +32,7 @@ npm run dev:all
 ssh user@your-server-ip
 
 # 克隆并部署
-git clone https://github.com/your-username/wealthtrack-pro.git
+git clone https://github.com/czmomocha/wealthtrack-pro.git
 cd wealthtrack-pro
 chmod +x deploy-full.sh
 ./deploy-full.sh

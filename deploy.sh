@@ -8,8 +8,16 @@
 set -e  # 遇到错误立即退出
 
 # ========== 配置区 ==========
-PROJECT_DIR="/var/www/wealthtrack-pro"  # 项目部署目录
-GIT_REPO="https://github.com/your-username/wealthtrack-pro.git"  # 替换为你的Git仓库地址
+# 自动检测项目目录
+if [ -f "package.json" ] && [ -f "server.js" ]; then
+    PROJECT_DIR="$(pwd)"
+    echo "✓ 检测到当前目录是项目根目录: $PROJECT_DIR"
+else
+    PROJECT_DIR="/var/www/wealthtrack-pro"  # Nginx默认目录
+    echo "→ 使用默认项目目录: $PROJECT_DIR"
+fi
+
+GIT_REPO="https://github.com/czmomocha/wealthtrack-pro.git"  # 替换为你的Git仓库地址
 GIT_BRANCH="master"  # Git分支
 NGINX_PORT=3000  # Nginx代理端口
 SERVER_IP=$(curl -s ifconfig.me)  # 自动获取服务器公网IP
@@ -33,21 +41,26 @@ fi
 
 # ========== 2. 拉取/更新代码 ==========
 echo "[2/5] 更新代码..."
-if [ -d "$PROJECT_DIR" ]; then
+
+# 如果当前目录就是项目目录且存在git仓库，直接更新
+if [ "$PROJECT_DIR" = "$(pwd)" ] && [ -d ".git" ]; then
+    echo "检测到当前目录已是项目仓库，执行更新..."
+    git stash save "自动备份 - $(date '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
+    git fetch origin
+    git checkout $GIT_BRANCH
+    git pull origin $GIT_BRANCH
+    echo "✓ 代码已更新到最新版本"
+    
+elif [ -d "$PROJECT_DIR" ]; then
     cd "$PROJECT_DIR"
     
     # 检查是否是git仓库
     if [ -d ".git" ]; then
         echo "检测到已存在的仓库，执行更新..."
-        
-        # 保存本地修改
         git stash save "自动备份 - $(date '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
-        
-        # 拉取最新代码
         git fetch origin
         git checkout $GIT_BRANCH
         git pull origin $GIT_BRANCH
-        
         echo "✓ 代码已更新到最新版本"
     else
         echo "目录存在但不是git仓库，重新克隆..."

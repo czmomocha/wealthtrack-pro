@@ -52,7 +52,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/your-username/wealthtrack-pro.git
+git clone https://github.com/czmomocha/wealthtrack-pro.git
 cd wealthtrack-pro
 
 # 2. 安装依赖
@@ -76,7 +76,7 @@ npm run dev:all
 
 ```bash
 # SSH登录VPS后执行
-git clone https://github.com/your-username/wealthtrack-pro.git
+git clone https://github.com/czmomocha/wealthtrack-pro.git
 cd wealthtrack-pro
 chmod +x deploy-full.sh
 ./deploy-full.sh
@@ -288,8 +288,8 @@ npm run start:server     # 启动后端服务
 
 ## 📞 联系方式
 
-- **问题反馈**：[GitHub Issues](https://github.com/your-username/wealthtrack-pro/issues)
-- **功能建议**：[GitHub Discussions](https://github.com/your-username/wealthtrack-pro/discussions)
+- **问题反馈**：[GitHub Issues](https://github.com/czmomocha/wealthtrack-pro/issues)
+- **功能建议**：[GitHub Discussions](https://github.com/czmomocha/wealthtrack-pro/discussions)
 
 ---
 

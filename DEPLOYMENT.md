@@ -45,7 +45,7 @@ npm run dev:server   # 后端：http://localhost:3001
 ```bash
 # SSH登录VPS后执行
 cd ~
-git clone https://github.com/your-username/wealthtrack-pro.git
+git clone https://github.com/czmomocha/wealthtrack-pro.git
 cd wealthtrack-pro
 
 # 赋予执行权限
@@ -321,4 +321,4 @@ tar -xzf ~/wealthtrack-data.tar.gz
 2. 前端日志：浏览器开发者工具 Console
 3. 网络请求：浏览器 Network 面板
 
-**联系方式：** [GitHub Issues](https://github.com/your-username/wealthtrack-pro/issues)
+**联系方式：** [GitHub Issues](https://github.com/czmomocha/wealthtrack-pro/issues)

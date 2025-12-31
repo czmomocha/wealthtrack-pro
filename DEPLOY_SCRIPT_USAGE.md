@@ -27,7 +27,7 @@
 ```bash
 # 首次部署
 cd ~
-git clone https://github.com/your-username/wealthtrack-pro.git
+git clone https://github.com/czmomocha/wealthtrack-pro.git
 cd wealthtrack-pro
 chmod +x deploy-full.sh
 
