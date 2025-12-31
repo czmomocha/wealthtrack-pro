@@ -141,26 +141,28 @@ if ! command -v node &> /dev/null; then
             curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
             sudo yum install -y nodejs
         else
-            # glibc < 2.28 (如CentOS 7)，使用NVM安装或安装旧版本
-            echo "⚠️  检测到glibc版本过低，无法直接安装Node.js 20.x"
-            echo "正在使用NVM方式安装Node.js 18.x (兼容CentOS 7)..."
+            # glibc < 2.28 (如CentOS 7)，使用官方旧版本二进制
+            echo "⚠️  检测到CentOS 7 (glibc 2.17)，需要特殊处理..."
+            echo "正在安装Node.js 16.x (最后支持CentOS 7的LTS版本)..."
             
-            # 安装NVM
-            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+            # 使用NodeSource的Node.js 16.x（官方支持CentOS 7）
+            curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo bash -
+            sudo yum install -y nodejs
             
-            # 加载NVM
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            # 如果16.x也失败，尝试从EPEL安装
+            if ! command -v node &> /dev/null; then
+                echo "尝试从EPEL仓库安装..."
+                sudo yum install -y epel-release
+                sudo yum install -y nodejs npm
+            fi
             
-            # 安装Node.js 18 (LTS，支持CentOS 7)
-            nvm install 18
-            nvm use 18
-            nvm alias default 18
-            
-            # 更新bashrc以便后续使用
-            if ! grep -q "NVM_DIR" ~/.bashrc; then
-                echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc
-                echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+            # 最后的方案：手动下载兼容的二进制版本
+            if ! command -v node &> /dev/null; then
+                echo "使用手动安装方式..."
+                cd /tmp
+                wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
+                sudo tar -xf node-v16.20.2-linux-x64.tar.xz -C /usr/local --strip-components=1
+                rm -f node-v16.20.2-linux-x64.tar.xz
             fi
         fi
     else
@@ -170,11 +172,16 @@ if ! command -v node &> /dev/null; then
     fi
     
     if ! command -v node &> /dev/null; then
-        echo "❌ Node.js安装失败，请手动安装"
-        echo "   对于CentOS 7系统，推荐使用NVM:"
-        echo "   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
-        echo "   source ~/.bashrc"
-        echo "   nvm install 18"
+        echo "❌ Node.js安装失败"
+        echo ""
+        echo "对于CentOS 7系统，请手动执行以下命令："
+        echo "1. 使用二进制包安装Node.js 16.x："
+        echo "   cd /tmp"
+        echo "   wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz"
+        echo "   sudo tar -xf node-v16.20.2-linux-x64.tar.xz -C /usr/local --strip-components=1"
+        echo "   node -v"
+        echo ""
+        echo "2. 或升级系统到CentOS 8+/Rocky Linux 8+"
         exit 1
     fi
     
