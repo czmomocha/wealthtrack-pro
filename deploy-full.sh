@@ -48,6 +48,9 @@ if [ "$PROJECT_DIR" = "$(pwd)" ] && [ -d ".git" ]; then
     git checkout $GIT_BRANCH
     git pull origin $GIT_BRANCH
     
+    # 恢复脚本执行权限
+    chmod +x deploy-*.sh 2>/dev/null || true
+    
     echo "✓ 代码已更新到最新版本"
     
 elif [ -d "$PROJECT_DIR" ]; then
@@ -65,6 +68,9 @@ elif [ -d "$PROJECT_DIR" ]; then
         git checkout $GIT_BRANCH
         git pull origin $GIT_BRANCH
         
+        # 恢复脚本执行权限
+        chmod +x deploy-*.sh 2>/dev/null || true
+        
         echo "✓ 代码已更新到最新版本"
     else
         echo "目录存在但不是git仓库，重新克隆..."
@@ -72,6 +78,10 @@ elif [ -d "$PROJECT_DIR" ]; then
         rm -rf "$PROJECT_DIR"
         git clone -b $GIT_BRANCH $GIT_REPO "$PROJECT_DIR"
         cd "$PROJECT_DIR"
+        
+        # 恢复脚本执行权限
+        chmod +x deploy-*.sh 2>/dev/null || true
+        
         echo "✓ 代码已重新克隆"
     fi
 else
@@ -79,6 +89,10 @@ else
     mkdir -p "$(dirname "$PROJECT_DIR")"
     git clone -b $GIT_BRANCH $GIT_REPO "$PROJECT_DIR"
     cd "$PROJECT_DIR"
+    
+    # 恢复脚本执行权限
+    chmod +x deploy-*.sh 2>/dev/null || true
+    
     echo "✓ 代码已克隆"
 fi
 
@@ -111,25 +125,67 @@ if ! command -v node &> /dev/null; then
         echo "检测到Debian/Ubuntu系统，使用NodeSource安装..."
         curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
         sudo apt-get install -y nodejs
+        
     elif [ -f /etc/redhat-release ]; then
-        # CentOS/RHEL
-        echo "检测到CentOS/RHEL系统，使用NodeSource安装..."
-        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-        sudo yum install -y nodejs
+        # CentOS/RHEL - 检查版本
+        OS_VERSION=$(cat /etc/redhat-release)
+        echo "检测到系统: $OS_VERSION"
+        
+        # 检查glibc版本
+        GLIBC_VERSION=$(ldd --version | head -n1 | grep -oP '\d+\.\d+$' || echo "0")
+        echo "当前glibc版本: $GLIBC_VERSION"
+        
+        if [ -n "$GLIBC_VERSION" ] && awk -v ver="$GLIBC_VERSION" 'BEGIN{exit(ver<2.28)}'; then
+            # glibc >= 2.28，可以安装Node.js 20
+            echo "使用NodeSource安装Node.js 20.x..."
+            curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+            sudo yum install -y nodejs
+        else
+            # glibc < 2.28 (如CentOS 7)，使用NVM安装或安装旧版本
+            echo "⚠️  检测到glibc版本过低，无法直接安装Node.js 20.x"
+            echo "正在使用NVM方式安装Node.js 18.x (兼容CentOS 7)..."
+            
+            # 安装NVM
+            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+            
+            # 加载NVM
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # 安装Node.js 18 (LTS，支持CentOS 7)
+            nvm install 18
+            nvm use 18
+            nvm alias default 18
+            
+            # 更新bashrc以便后续使用
+            if ! grep -q "NVM_DIR" ~/.bashrc; then
+                echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc
+                echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+            fi
+        fi
     else
-        echo "❌ 无法识别的操作系统，请手动安装Node.js 20.x或更高版本"
-        echo "   参考: https://nodejs.org/en/download/package-manager"
+        echo "❌ 无法识别的操作系统，请手动安装Node.js"
+        echo "   推荐使用NVM: https://github.com/nvm-sh/nvm"
         exit 1
     fi
     
     if ! command -v node &> /dev/null; then
         echo "❌ Node.js安装失败，请手动安装"
+        echo "   对于CentOS 7系统，推荐使用NVM:"
+        echo "   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
+        echo "   source ~/.bashrc"
+        echo "   nvm install 18"
         exit 1
     fi
     
     echo "✓ Node.js $(node -v) 安装成功"
 else
-    echo "✓ Node.js $(node -v) 已安装"
+    NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+    if [ "$NODE_VERSION" -lt 16 ]; then
+        echo "⚠️  Node.js版本过低 ($(node -v))，建议升级到16+版本"
+    else
+        echo "✓ Node.js $(node -v) 已安装"
+    fi
 fi
 
 if ! command -v npm &> /dev/null; then

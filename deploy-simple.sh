@@ -40,6 +40,10 @@ if [ "$PROJECT_DIR" = "$(pwd)" ] && [ -d ".git" ]; then
     git fetch origin
     git checkout $GIT_BRANCH
     git pull origin $GIT_BRANCH
+    
+    # 恢复脚本执行权限
+    chmod +x deploy-*.sh 2>/dev/null || true
+    
     echo "✓ 代码已更新"
     
 elif [ -d "$PROJECT_DIR" ]; then
@@ -52,6 +56,10 @@ elif [ -d "$PROJECT_DIR" ]; then
         git fetch origin
         git checkout $GIT_BRANCH
         git pull origin $GIT_BRANCH
+        
+        # 恢复脚本执行权限
+        chmod +x deploy-*.sh 2>/dev/null || true
+        
         echo "✓ 代码已更新"
     else
         echo "目录存在但不是git仓库，重新克隆..."
@@ -59,12 +67,20 @@ elif [ -d "$PROJECT_DIR" ]; then
         rm -rf "$PROJECT_DIR"
         git clone -b $GIT_BRANCH $GIT_REPO "$PROJECT_DIR"
         cd "$PROJECT_DIR"
+        
+        # 恢复脚本执行权限
+        chmod +x deploy-*.sh 2>/dev/null || true
+        
         echo "✓ 代码已重新克隆"
     fi
 else
     echo "首次部署，克隆仓库..."
     git clone -b $GIT_BRANCH $GIT_REPO "$PROJECT_DIR"
     cd "$PROJECT_DIR"
+    
+    # 恢复脚本执行权限
+    chmod +x deploy-*.sh 2>/dev/null || true
+    
     echo "✓ 代码已克隆"
 fi
 
