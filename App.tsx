@@ -38,6 +38,7 @@ import {
 import { Asset, Currency, InvestmentPath, PortfolioStats, User } from './types';
 import { INITIAL_CURRENCIES, INITIAL_PATHS, COLORS } from './constants';
 import { analyzePortfolio } from './services/geminiService';
+import { uploadToServer, downloadFromServer, registerUser, checkServerHealth } from './services/serverStorageService';
 import Icon from './components/Icon';
 
 const App: React.FC = () => {
@@ -134,53 +135,68 @@ const App: React.FC = () => {
     };
   }, [currentUserAssets, currencies, paths]);
 
-  // Cloud Sync Handlers (Reliability Enhanced)
+  // Cloud Sync Handlers (使用自建服务器)
   const handleCloudUpload = async () => {
     setIsSyncing(true);
-    // Bundle EVERYTHING for a full workspace sync
     const payload = { users, activeUserId, assets, currencies, paths, version: '2.0' };
+    
     try {
-      const response = await fetch('https://jsonblob.com/api/jsonBlob', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-      const location = response.headers.get('Location');
-      if (location) {
-        const id = location.split('/').pop() || '';
-        setSyncCode(id);
-        alert('工作区已备份！同步码: ' + id + '\n您现在可以在手机端输入此码拉取。');
+      // 检查服务器健康状态
+      const isHealthy = await checkServerHealth();
+      if (!isHealthy) {
+        throw new Error('服务器连接失败');
       }
-    } catch (error) {
-      alert('备份失败，请确保网络通畅且未开启广告拦截插件。');
+
+      let userId = syncCode;
+      
+      // 如果没有同步码，生成新的用户ID
+      if (!userId) {
+        userId = await registerUser();
+        setSyncCode(userId);
+      }
+      
+      // 上传数据到服务器
+      await uploadToServer(userId, payload);
+      
+      alert(`✅ 数据已备份到服务器！\n\n您的用户ID: ${userId}\n\n请妥善保存此ID，其他设备可使用此ID同步数据。`);
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      alert(`❌ 备份失败: ${error.message}\n\n请确保：\n1. 后端服务已启动\n2. API地址配置正确\n3. 网络连接正常`);
     } finally {
       setIsSyncing(false);
     }
   };
 
   const handleCloudSync = async () => {
-    if (!syncCode) return alert('请输入同步码');
+    if (!syncCode) return alert('请输入用户ID');
     setIsSyncing(true);
+    
     try {
-      const response = await fetch(`https://jsonblob.com/api/jsonBlob/${syncCode}`, {
-        headers: { 'Accept': 'application/json' }
-      });
-      if (!response.ok) throw new Error();
-      const data = await response.json();
+      // 检查服务器健康状态
+      const isHealthy = await checkServerHealth();
+      if (!isHealthy) {
+        throw new Error('服务器连接失败');
+      }
+
+      // 从服务器下载数据
+      const data = await downloadFromServer(syncCode);
       
-      if (confirm('同步将覆盖此设备上的所有用户和资产数据，是否继续？')) {
+      if (confirm('⚠️ 同步将覆盖此设备上的所有数据，是否继续？')) {
         setUsers(data.users || [{ id: 'default', name: '我的主钱包', createdAt: Date.now() }]);
         setActiveUserId(data.activeUserId || 'default');
         setAssets(data.assets || []);
         setCurrencies(data.currencies || INITIAL_CURRENCIES);
         setPaths(data.paths || INITIAL_PATHS);
-        alert('同步成功！工作区已更新。');
+        
+        const timestamp = data.serverTimestamp 
+          ? new Date(data.serverTimestamp).toLocaleString('zh-CN')
+          : '未知';
+        
+        alert(`✅ 同步成功！\n\n数据更新时间: ${timestamp}`);
       }
-    } catch (error) {
-      alert('未找到云端数据，请检查同步码是否正确。');
+    } catch (error: any) {
+      console.error('Download error:', error);
+      alert(`❌ 同步失败: ${error.message}\n\n请检查：\n1. 用户ID是否正确\n2. 服务器是否已保存数据\n3. 网络连接是否正常`);
     } finally {
       setIsSyncing(false);
     }
@@ -442,19 +458,19 @@ const App: React.FC = () => {
           {activeTab === 'settings' && (
             <div className="max-w-4xl mx-auto space-y-12">
               <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
-                <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white"><h3 className="text-xl font-bold flex items-center gap-2"><RefreshCw className={isSyncing ? "animate-spin" : ""} size={24} />工作区云端同步</h3><p className="text-blue-100 text-sm mt-1">跨设备（手机/电脑）同步所有账户和配置</p></div>
+                <div className="p-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white"><h3 className="text-xl font-bold flex items-center gap-2"><RefreshCw className={isSyncing ? "animate-spin" : ""} size={24} />服务器数据同步</h3><p className="text-blue-100 text-sm mt-1">跨设备同步，数据存储在您的VPS服务器上</p></div>
                 <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-10">
                   <div className="space-y-4">
-                    <div className="font-bold text-slate-700 flex items-center gap-2"><CloudUpload size={18} className="text-blue-600" />备份到云端</div>
-                    <p className="text-xs text-slate-500">上传后生成的同步码是唯一的。之后只需在其他设备输入该码即可同步。</p>
+                    <div className="font-bold text-slate-700 flex items-center gap-2"><CloudUpload size={18} className="text-blue-600" />备份到服务器</div>
+                    <p className="text-xs text-slate-500">上传后生成唯一的用户ID。之后在其他设备输入该ID即可同步。</p>
                     <button onClick={handleCloudUpload} disabled={isSyncing} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2">{isSyncing ? "上传中..." : "备份当前数据"}</button>
-                    {syncCode && <div className="mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between"><div><p className="text-[10px] uppercase text-slate-400 font-bold">工作区同步码</p><p className="font-mono font-bold text-blue-600 truncate">{syncCode}</p></div><button onClick={() => { navigator.clipboard.writeText(syncCode); alert('已复制'); }} className="p-2 text-slate-400 hover:text-blue-600"><Copy size={18} /></button></div>}
+                    {syncCode && <div className="mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between"><div><p className="text-[10px] uppercase text-slate-400 font-bold">用户ID</p><p className="font-mono font-bold text-blue-600 truncate">{syncCode}</p></div><button onClick={() => { navigator.clipboard.writeText(syncCode); alert('已复制'); }} className="p-2 text-slate-400 hover:text-blue-600"><Copy size={18} /></button></div>}
                   </div>
                   <div className="space-y-4">
-                    <div className="font-bold text-slate-700 flex items-center gap-2"><CloudDownload size={18} className="text-emerald-600" />从云端拉取</div>
-                    <p className="text-xs text-slate-500">输入已有同步码，恢复或跨设备同步您的工作区。</p>
-                    <div className="flex gap-2"><input placeholder="同步码" className="flex-1 px-4 py-3 border border-slate-200 rounded-xl font-mono text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={syncCode} onChange={e => setSyncCode(e.target.value)} /><button onClick={handleCloudSync} disabled={isSyncing} className="px-6 bg-emerald-600 text-white rounded-xl font-bold">同步</button></div>
-                    <div className="p-3 bg-amber-50 text-amber-700 text-[10px] rounded-xl flex items-start gap-2"><AlertCircle size={14} className="shrink-0" />注意：云端同步将覆盖此设备上的本地修改，请确保重要数据已备份。</div>
+                    <div className="font-bold text-slate-700 flex items-center gap-2"><CloudDownload size={18} className="text-emerald-600" />从服务器同步</div>
+                    <p className="text-xs text-slate-500">输入您的用户ID，从服务器恢复或同步数据。</p>
+                    <div className="flex gap-2"><input placeholder="用户ID" className="flex-1 px-4 py-3 border border-slate-200 rounded-xl font-mono text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={syncCode} onChange={e => setSyncCode(e.target.value)} /><button onClick={handleCloudSync} disabled={isSyncing} className="px-6 bg-emerald-600 text-white rounded-xl font-bold">同步</button></div>
+                    <div className="p-3 bg-amber-50 text-amber-700 text-[10px] rounded-xl flex items-start gap-2"><AlertCircle size={14} className="shrink-0" />同步将覆盖本地数据。首次使用需先在服务器部署后端API服务。</div>
                   </div>
                 </div>
               </div>
