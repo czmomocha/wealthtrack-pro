@@ -220,8 +220,8 @@ fi
 # 启动后端API服务
 PORT=$BACKEND_PORT pm2 start server.js --name wealthtrack-backend
 
-# 启动前端服务
-PORT=$FRONTEND_PORT pm2 start npm --name wealthtrack-frontend -- run preview
+# 启动前端服务（明确指定端口和host）
+pm2 start npm --name wealthtrack-frontend -- run preview -- --port $FRONTEND_PORT --host 0.0.0.0
 
 pm2 save
 pm2 startup

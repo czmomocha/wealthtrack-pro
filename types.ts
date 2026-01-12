@@ -36,6 +36,7 @@ export interface Asset {
   appreciationRate?: number;
   note?: string;
   createdAt: number;
+  isDebt?: boolean; // 标记是否为负债（贷款余额）
 }
 
 export interface PortfolioStats {

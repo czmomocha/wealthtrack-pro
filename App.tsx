@@ -78,6 +78,10 @@ const App: React.FC = () => {
   const [showAddPathForm, setShowAddPathForm] = useState(false);
   const [newCurrency, setNewCurrency] = useState({ code: '', symbol: '', rate: '' });
   const [newPathName, setNewPathName] = useState('');
+  const [editingCurrency, setEditingCurrency] = useState<Currency | null>(null);
+  const [editRate, setEditRate] = useState('');
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [pendingMigration, setPendingMigration] = useState<{ oldPathId: string; newPathIds: string[] }[]>([]);
 
   // Persistence
   useEffect(() => {
@@ -88,6 +92,23 @@ const App: React.FC = () => {
     localStorage.setItem('wt_paths', JSON.stringify(paths));
     localStorage.setItem('wt_sync_code', syncCode);
   }, [users, activeUserId, assets, currencies, paths, syncCode]);
+
+  // Path Migration Check
+  useEffect(() => {
+    const oldPaths = paths.filter(p => p.name === '股票市场' || p.name === '房地产');
+    if (oldPaths.length > 0) {
+      const migrations = oldPaths.map(p => {
+        if (p.name === '股票市场') {
+          return { oldPathId: p.id, newPathIds: ['2', '3', '4'] }; // A股, 港股, 美股
+        } else if (p.name === '房地产') {
+          return { oldPathId: p.id, newPathIds: ['6', '7'] }; // 国内房产, 海外房产
+        }
+        return { oldPathId: p.id, newPathIds: [] };
+      });
+      setPendingMigration(migrations);
+      setShowMigrationModal(true);
+    }
+  }, []);
 
   // Derived: Current User's Assets
   const activeUser = useMemo(() => users.find(u => u.id === activeUserId) || users[0], [users, activeUserId]);
@@ -112,25 +133,28 @@ const App: React.FC = () => {
       const curr = currencies.find(c => c.code === a.currencyCode) || currencies[0];
       const valCNY = a.amount * curr.rateToCNY;
       totalValueCNY += valCNY;
-      weightedYieldSum += (valCNY * a.annualYield);
+
+      // 贷款余额处理：如果是负债，收益率取反（贷款利息是支出）
+      const effectiveYield = a.amount < 0 ? -a.annualYield : a.annualYield;
+      weightedYieldSum += (valCNY * effectiveYield);
 
       currMap[a.currencyCode] = (currMap[a.currencyCode] || 0) + valCNY;
-      
+
       const path = paths.find(p => p.id === a.pathId);
       const pathName = path?.name || '未知';
       if (!pathStats[pathName]) pathStats[pathName] = { value: 0, yieldWeight: 0 };
       pathStats[pathName].value += valCNY;
-      pathStats[pathName].yieldWeight += (valCNY * a.annualYield);
+      pathStats[pathName].yieldWeight += (valCNY * effectiveYield);
     });
 
     return {
       totalValueCNY,
       totalProjectedYield: totalValueCNY > 0 ? weightedYieldSum / totalValueCNY : 0,
       currencyDistribution: Object.entries(currMap).map(([name, value]) => ({ name, value })),
-      pathDistribution: Object.entries(pathStats).map(([name, stat]) => ({ 
-        name, 
+      pathDistribution: Object.entries(pathStats).map(([name, stat]) => ({
+        name,
         value: stat.value,
-        avgYield: stat.value > 0 ? stat.yieldWeight / stat.value : 0
+        avgYield: stat.value !== 0 ? stat.yieldWeight / stat.value : 0
       }))
     };
   }, [currentUserAssets, currencies, paths]);
@@ -206,9 +230,31 @@ const App: React.FC = () => {
   const handleAddUser = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const name = new FormData(e.currentTarget).get('userName') as string;
+    const copyBaseAssets = new FormData(e.currentTarget).get('copyBaseAssets') === 'on';
+    
     if (!name) return;
+    
     const newUser: User = { id: Date.now().toString(), name, createdAt: Date.now() };
+    
+    let newAssets = [...assets];
+    
+    if (copyBaseAssets && users.length > 0) {
+      const baseWallet = users[0];
+      const baseAssets = assets.filter(a => a.userId === baseWallet.id);
+      
+      if (baseAssets.length > 0) {
+        const copiedAssets = baseAssets.map(asset => ({
+          ...asset,
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          userId: newUser.id,
+          createdAt: Date.now()
+        }));
+        newAssets = [...assets, ...copiedAssets];
+      }
+    }
+    
     setUsers([...users, newUser]);
+    setAssets(newAssets);
     setActiveUserId(newUser.id);
     setShowAddUserModal(false);
   };
@@ -234,7 +280,9 @@ const App: React.FC = () => {
     const formData = new FormData(e.currentTarget);
     const pathId = formData.get('pathId') as string;
     const pathName = paths.find(p => p.id === pathId)?.name || '';
-    const isRealEstate = pathName === '房地产' || pathName === '房产';
+    const isRealEstate = pathName === '房地产' || pathName === '房产' || pathName === '国内房产' || pathName === '海外房产';
+    const isLoan = pathName === '贷款余额';
+    const amount = parseFloat(formData.get('amount') as string);
 
     let annualYield = 0;
     let rentalYield = undefined;
@@ -244,6 +292,9 @@ const App: React.FC = () => {
       rentalYield = parseFloat(formData.get('rentalYield') as string) || 0;
       appreciationRate = parseFloat(formData.get('appreciationRate') as string) || 0;
       annualYield = rentalYield + appreciationRate;
+    } else if (isLoan) {
+      // 贷款余额：用户输入正数表示贷款金额，收益率输入正数表示利息支出
+      annualYield = parseFloat(formData.get('annualYield') as string) || 0;
     } else {
       annualYield = parseFloat(formData.get('annualYield') as string) || 0;
     }
@@ -254,11 +305,12 @@ const App: React.FC = () => {
       name: formData.get('name') as string,
       pathId: pathId,
       currencyCode: formData.get('currencyCode') as string,
-      amount: parseFloat(formData.get('amount') as string),
+      amount: amount,
       annualYield,
       rentalYield,
       appreciationRate,
       createdAt: editingAsset?.createdAt || Date.now(),
+      isDebt: isLoan || amount < 0
     };
 
     if (editingAsset) {
@@ -288,12 +340,65 @@ const App: React.FC = () => {
     setShowAddCurrencyForm(false);
   };
 
+  const updateCurrencyRate = (code: string, newRate: number) => {
+    setCurrencies(currencies.map(c => 
+      c.code === code 
+        ? { ...c, rateToCNY: newRate }
+        : c
+    ));
+    setEditingCurrency(null);
+    setEditRate('');
+  };
+
+  const startEditCurrency = (currency: Currency) => {
+    setEditingCurrency(currency);
+    setEditRate(currency.rateToCNY.toString());
+  };
+
+  const cancelEditCurrency = () => {
+    setEditingCurrency(null);
+    setEditRate('');
+  };
+
   const submitAddPath = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPathName.trim()) return;
     setPaths([...paths, { id: Date.now().toString(), name: newPathName.trim(), icon: 'Target' }]);
     setNewPathName('');
     setShowAddPathForm(false);
+  };
+
+  const handlePathMigration = () => {
+    let newAssets = [...assets];
+    let assetsToMigrate = 0;
+
+    pendingMigration.forEach(migration => {
+      const affectedAssets = assets.filter(a => a.pathId === migration.oldPathId);
+      assetsToMigrate += affectedAssets.length;
+
+      affectedAssets.forEach((asset, index) => {
+        if (migration.newPathIds.length > 0) {
+          const newPathId = migration.newPathIds[index % migration.newPathIds.length];
+          const assetIndex = newAssets.findIndex(a => a.id === asset.id);
+          if (assetIndex !== -1) {
+            newAssets[assetIndex] = { ...newAssets[assetIndex], pathId: newPathId };
+          }
+        }
+      });
+    });
+
+    const newPathList = paths.filter(p => p.name !== '股票市场' && p.name !== '房地产');
+    setPaths(newPathList);
+    setAssets(newAssets);
+    setShowMigrationModal(false);
+    setPendingMigration([]);
+
+    alert(`迁移完成！\n\n已将 ${assetsToMigrate} 项资产迁移到新的投资路径：\n- 股票市场 → A股/港股/美股市场\n- 房地产 → 国内房产/海外房产`);
+  };
+
+  const cancelMigration = () => {
+    setShowMigrationModal(false);
+    setPendingMigration([]);
   };
 
   return (
@@ -386,16 +491,45 @@ const App: React.FC = () => {
 
               {/* Stats Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"><p className="text-slate-500 text-sm mb-1">总资产价值 (折合CNY)</p><span className="text-3xl font-bold">¥{formatWan(stats.totalValueCNY)}</span></div>
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"><p className="text-slate-500 text-sm mb-1">预期加权年化</p><span className="text-3xl font-bold text-emerald-600">{stats.totalProjectedYield.toFixed(2)}%</span></div>
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"><p className="text-slate-500 text-sm mb-1">年化收益预测</p><span className="text-3xl font-bold text-emerald-600">¥{formatWan(stats.totalValueCNY * stats.totalProjectedYield / 100)}</span></div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <p className="text-slate-500 text-sm mb-1">净资产价值 (折合CNY)</p>
+                  <span className={`text-3xl font-bold ${stats.totalValueCNY < 0 ? 'text-red-500' : ''}`}>
+                    {stats.totalValueCNY < 0 ? '-' : ''}¥{formatWan(Math.abs(stats.totalValueCNY))}
+                  </span>
+                  {currentUserAssets.some(a => a.amount < 0) && (
+                    <p className="text-xs text-red-400 mt-1">含负债资产</p>
+                  )}
+                </div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"><p className="text-slate-500 text-sm mb-1">预期加权年化</p><span className={`text-3xl font-bold ${stats.totalProjectedYield < 0 ? 'text-red-500' : 'text-emerald-600'}`}>{stats.totalProjectedYield.toFixed(2)}%</span></div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm"><p className="text-slate-500 text-sm mb-1">预期年化收益</p><span className={`text-3xl font-bold ${stats.totalValueCNY * stats.totalProjectedYield / 100 < 0 ? 'text-red-500' : 'text-emerald-600'}`}>{stats.totalValueCNY * stats.totalProjectedYield / 100 < 0 ? '-' : ''}¥{formatWan(Math.abs(stats.totalValueCNY * stats.totalProjectedYield / 100))}</span></div>
               </div>
 
               {/* Charts Section */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-[350px]">
                   <h3 className="text-md font-bold mb-4 flex items-center gap-2"><Globe size={18} className="text-blue-500" />币种占比</h3>
-                  <div className="flex-1"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={stats.currencyDistribution} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{stats.currencyDistribution.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip formatter={(v: number) => `¥${formatWan(v)}`} /><Legend /></PieChart></ResponsiveContainer></div>
+                  <div className="flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={stats.currencyDistribution.filter(c => c.value > 0)}
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {stats.currencyDistribution.filter(c => c.value > 0).map((_, i) => (
+                            <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(v: number) => `¥${formatWan(v)}`} />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  {stats.currencyDistribution.some(c => c.value < 0) && (
+                    <p className="text-xs text-red-400 text-center mt-2">* 含负值资产，已在图表中隐藏</p>
+                  )}
                 </div>
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-[350px]">
                   <h3 className="text-md font-bold mb-4 flex items-center gap-2"><TrendingUp size={18} className="text-emerald-500" />收益率与金额分布</h3>
@@ -403,8 +537,21 @@ const App: React.FC = () => {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={stats.pathDistribution} layout="vertical">
                         <XAxis type="number" hide /><YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12 }} />
-                        <Tooltip formatter={(v: any, n: string) => n === 'value' ? `¥${formatWan(v)}` : `${v.toFixed(2)}%`} />
-                        <Bar dataKey="value" radius={[0, 4, 4, 0]}>{stats.pathDistribution.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Bar>
+                        <Tooltip formatter={(v: any, n: string) => {
+                          if (n === 'value') {
+                            const val = v as number;
+                            return val < 0 ? `-¥${formatWan(Math.abs(val))}` : `¥${formatWan(v)}`;
+                          }
+                          return `${v.toFixed(2)}%`;
+                        }} />
+                        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                          {stats.pathDistribution.map((entry, i) => (
+                            <Cell
+                              key={`cell-${i}`}
+                              fill={entry.value < 0 ? '#ef4444' : COLORS[i % COLORS.length]}
+                            />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -434,14 +581,18 @@ const App: React.FC = () => {
                       {currentUserAssets.length === 0 ? <tr><td colSpan={7} className="px-6 py-12 text-center text-slate-400">当前账户暂无资产，请点击右上角新增。</td></tr> : currentUserAssets.map(asset => {
                         const currency = currencies.find(c => c.code === asset.currencyCode) || currencies[0];
                         const path = paths.find(p => p.id === asset.pathId);
-                        const isRealEstate = path?.name === '房地产' || path?.name === '房产';
+                        const isRealEstate = path?.name === '房地产' || path?.name === '房产' || path?.name === '国内房产' || path?.name === '海外房产';
+                        const isLoan = path?.name === '贷款余额';
+                        const isDebt = asset.amount < 0 || asset.isDebt;
+                        const displayAmount = Math.abs(asset.amount);
+                        const displayYield = asset.amount < 0 ? -asset.annualYield : asset.annualYield;
                         return (
                           <tr key={asset.id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4 font-medium">{asset.name}</td>
-                            <td className="px-6 py-4 text-xs"><span className="px-2 py-1 bg-slate-100 rounded-full">{path?.name || '未知'}</span></td>
-                            <td className="px-6 py-4 font-mono text-sm">{currency.symbol}{asset.amount.toLocaleString()}</td>
-                            <td className="px-6 py-4 font-mono text-sm">¥{formatWan(asset.amount * currency.rateToCNY)}</td>
-                            <td className="px-6 py-4 text-emerald-600 font-bold">{asset.annualYield.toFixed(2)}%</td>
+                            <td className="px-6 py-4 text-xs"><span className={`px-2 py-1 rounded-full ${isLoan ? 'bg-orange-100 text-orange-700' : isDebt ? 'bg-red-100 text-red-700' : 'bg-slate-100'}`}>{path?.name || '未知'}</span></td>
+                            <td className={`px-6 py-4 font-mono text-sm ${isDebt ? 'text-red-500' : ''}`}>{currency.symbol}{displayAmount.toLocaleString()}{isDebt && <span className="text-xs ml-1 opacity-75">(贷)</span>}</td>
+                            <td className={`px-6 py-4 font-mono text-sm ${isDebt ? 'text-red-500' : ''}`}>¥{formatWan(Math.abs(asset.amount) * currency.rateToCNY)}{isDebt && <span className="text-xs ml-1 opacity-75">(负)</span>}</td>
+                            <td className={`px-6 py-4 ${isDebt ? 'text-red-500' : 'text-emerald-600'} font-bold`}>{displayYield.toFixed(2)}%</td>
                             <td className="px-6 py-4 text-[10px] text-slate-400">{isRealEstate ? `租:${asset.rentalYield}% 估:${asset.appreciationRate}%` : '-'}</td>
                             <td className="px-6 py-4"><div className="flex gap-2"><button onClick={() => { setEditingAsset(asset); setIsModalOpen(true); }} className="p-1 text-slate-400 hover:text-blue-600"><Edit3 size={16} /></button><button onClick={() => { if(confirm('删除？')) setAssets(assets.filter(a=>a.id!==asset.id)); }} className="p-1 text-slate-400 hover:text-red-600"><Trash2 size={16} /></button></div></td>
                           </tr>
@@ -481,7 +632,78 @@ const App: React.FC = () => {
                   <div className="flex items-center justify-between"><h3 className="text-lg font-bold flex items-center gap-2"><Globe size={18} className="text-blue-500" />币种汇率管理</h3><button onClick={() => setShowAddCurrencyForm(!showAddCurrencyForm)} className="text-xs font-bold text-blue-600">{showAddCurrencyForm ? '取消' : '新增'}</button></div>
                   <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
                     {showAddCurrencyForm && <form onSubmit={submitAddCurrency} className="p-4 bg-blue-50/30 border-b border-blue-100 flex flex-col gap-3"><input placeholder="代码 (如: EUR)" className="px-3 py-2 border rounded-lg text-sm" value={newCurrency.code} onChange={e => setNewCurrency({...newCurrency, code: e.target.value.toUpperCase()})} /><div className="flex gap-2"><input type="number" step="any" placeholder="对CNY汇率" className="flex-1 px-3 py-2 border rounded-lg text-sm" value={newCurrency.rate} onChange={e => setNewCurrency({...newCurrency, rate: e.target.value})} /><button type="submit" className="bg-blue-600 text-white px-4 rounded-lg"><Check size={16} /></button></div></form>}
-                    <div className="divide-y">{currencies.map(c => <div key={c.code} className="p-4 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center font-bold text-xs">{c.code}</div><div><p className="text-sm font-semibold">1 {c.code} = {c.rateToCNY} CNY</p></div></div>{c.code !== 'CNY' && <button onClick={() => setCurrencies(currencies.filter(cur => cur.code !== c.code))} className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>}</div>)}</div>
+                    <div className="divide-y">
+                      {currencies.map(c => {
+                        const isEditing = editingCurrency?.code === c.code;
+                        return (
+                          <div key={c.code} className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center font-bold text-xs">{c.code}</div>
+                              {isEditing ? (
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="number" 
+                                    step="any" 
+                                    autoFocus
+                                    className="px-2 py-1 border rounded-lg text-sm w-32 outline-none focus:ring-2 focus:ring-blue-500" 
+                                    value={editRate} 
+                                    onChange={e => setEditRate(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        const newRate = parseFloat(editRate);
+                                        if (newRate > 0) updateCurrencyRate(c.code, newRate);
+                                      }
+                                    }}
+                                  />
+                                  <button 
+                                    onClick={() => {
+                                      const newRate = parseFloat(editRate);
+                                      if (newRate > 0) updateCurrencyRate(c.code, newRate);
+                                    }}
+                                    className="p-1 text-emerald-600 hover:text-emerald-700"
+                                  >
+                                    <Check size={16} />
+                                  </button>
+                                  <button 
+                                    onClick={cancelEditCurrency}
+                                    className="p-1 text-slate-400 hover:text-slate-600"
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div>
+                                  <p className="text-sm font-semibold">
+                                    1 {c.code} = {c.rateToCNY} CNY
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                            {!isEditing && (
+                              <div className="flex gap-2">
+                                {c.code !== 'CNY' && (
+                                  <button 
+                                    onClick={() => startEditCurrency(c)}
+                                    className="p-1 text-slate-300 hover:text-blue-600"
+                                  >
+                                    <Edit3 size={16} />
+                                  </button>
+                                )}
+                                {c.code !== 'CNY' && (
+                                  <button 
+                                    onClick={() => setCurrencies(currencies.filter(cur => cur.code !== c.code))}
+                                    className="text-slate-300 hover:text-red-500"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
                 {/* Path Manager */}
@@ -512,6 +734,20 @@ const App: React.FC = () => {
             <div className="px-6 py-4 border-b flex items-center justify-between bg-slate-50/50"><h3 className="font-bold">新增账户</h3><button onClick={() => setShowAddUserModal(false)}><X size={20} /></button></div>
             <form onSubmit={handleAddUser} className="p-6 space-y-4">
               <div><label className="block text-xs font-bold text-slate-500 mb-1.5">账户名称</label><input autoFocus name="userName" required placeholder="例如：美股账户、家庭储备" className="w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+              {users.length > 0 && (
+                <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
+                  <input 
+                    type="checkbox" 
+                    name="copyBaseAssets" 
+                    defaultChecked={true}
+                    className="mt-0.5 w-4 h-4 text-blue-600 rounded border-blue-300 focus:ring-blue-500"
+                  />
+                  <div>
+                    <p className="text-xs font-bold text-slate-700">复制基础钱包资产</p>
+                    <p className="text-[10px] text-slate-500">将"{users[0].name}"的所有资产复制到新钱包</p>
+                  </div>
+                </div>
+              )}
               <button type="submit" className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-blue-100 flex items-center justify-center gap-2"><Check size={18} />确认创建</button>
             </form>
           </div>
@@ -529,8 +765,8 @@ const App: React.FC = () => {
                 <div><label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">路径</label><select name="pathId" value={selectedPathId} onChange={(e)=>setSelectedPathId(e.target.value)} className="w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{paths.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
                 <div><label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">币种</label><select name="currencyCode" defaultValue={editingAsset?.currencyCode} className="w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none">{currencies.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}</select></div>
               </div>
-              <div><label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">金额</label><input name="amount" type="number" step="any" required defaultValue={editingAsset?.amount} className="w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" /></div>
-              {(paths.find(p => p.id === selectedPathId)?.name === '房地产' || paths.find(p => p.id === selectedPathId)?.name === '房产') ? (
+              <div><label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">金额</label><input name="amount" type="number" step="0.01" required defaultValue={editingAsset?.amount} className="w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="正数为资产，负数为贷款" /></div>
+              {(paths.find(p => p.id === selectedPathId)?.name === '房地产' || paths.find(p => p.id === selectedPathId)?.name === '房产' || paths.find(p => p.id === selectedPathId)?.name === '国内房产' || paths.find(p => p.id === selectedPathId)?.name === '海外房产') ? (
                 <div className="bg-slate-50 p-4 rounded-2xl space-y-4 border border-slate-100">
                   <div className="grid grid-cols-2 gap-4">
                     <div><label className="block text-[10px] font-bold text-slate-500 mb-1">租金收益率 (%)</label><input name="rentalYield" type="number" step="0.01" required defaultValue={editingAsset?.rentalYield || 0} className="w-full px-3 py-2 border rounded-lg bg-white" /></div>
@@ -538,10 +774,62 @@ const App: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div><label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">预期年化 (%)</label><input name="annualYield" type="number" step="0.01" required defaultValue={editingAsset?.annualYield} className="w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" /></div>
+                <div><label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">预期年化 (%)</label><input name="annualYield" type="number" step="0.01" required defaultValue={editingAsset?.annualYield} className="w-full px-4 py-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" /></div>
               )}
               <div className="pt-4"><button type="submit" className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2"><Check size={18} />保存</button></div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Path Migration Modal */}
+      {showMigrationModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 py-4 border-b flex items-center justify-between bg-amber-50/50">
+              <h3 className="font-bold text-amber-700 flex items-center gap-2">
+                <AlertCircle size={20} />
+                投资路径更新
+              </h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-slate-700 leading-relaxed">
+                我们已更新投资路径以提供更细致的分类。检测到您的资产使用了旧的路径分类：
+              </p>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
+                  <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center text-amber-600 font-bold text-sm">1</div>
+                  <div>
+                    <p className="font-semibold text-slate-800">股票市场</p>
+                    <p className="text-xs text-slate-600">→ 拆分为：A股市场、港股市场、美股市场</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
+                  <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center text-amber-600 font-bold text-sm">2</div>
+                  <div>
+                    <p className="font-semibold text-slate-800">房地产</p>
+                    <p className="text-xs text-slate-600">→ 拆分为：国内房产、海外房产</p>
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded-lg">
+                💡 您的资产将自动分配到新路径（循环分配），之后可在资产列表中手动调整。
+              </p>
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={handlePathMigration}
+                  className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+                >
+                  立即迁移
+                </button>
+                <button 
+                  onClick={cancelMigration}
+                  className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-colors"
+                >
+                  暂不迁移
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

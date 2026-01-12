@@ -100,7 +100,7 @@ if ! command -v pm2 &> /dev/null; then
 fi
 
 # 使用PM2启动vite preview
-PORT=$PORT pm2 start npm --name wealthtrack -- run preview
+pm2 start npm --name wealthtrack -- run preview -- --port $PORT --host 0.0.0.0
 pm2 save
 pm2 startup
 
